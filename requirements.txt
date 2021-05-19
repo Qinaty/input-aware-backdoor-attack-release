@@ -1,8 +1,9 @@
+-f https://download.pytorch.org/whl/torch_stable.html
 numpy==1.16.6
 opencv_contrib_python==3.4.2.17
 matplotlib==3.2.1
-torch==1.5.0
-torchvision==0.6.0
+torch==1.5.0+cpu
+torchvision==0.6.0+cpu
 tensorboard==1.14.0
 tensorboardX==2.0
 opencv-python==4.2.0.34

@@ -20,6 +20,7 @@ def create_targets_bd(targets, opt):
     if opt.attack_mode == "all2one":
         bd_targets = torch.ones_like(targets) * opt.target_label
     elif opt.attack_mode == "all2all_mask":
+        # all2all将标签设置为+1的类型
         bd_targets = torch.tensor([(label + 1) % opt.num_classes for label in targets])
     else:
         raise Exception("{} attack mode is not implemented".format(opt.attack_mode))
@@ -29,10 +30,10 @@ def create_targets_bd(targets, opt):
 def create_bd(inputs, targets, netG, netM, opt):
     bd_targets = create_targets_bd(targets, opt)
     patterns = netG(inputs)
-    patterns = netG.normalize_pattern(patterns)
+    patterns = netG.normalize_pattern(patterns)    # 将要叠加的pattern规范化为数据集的样式
 
     masks_output = netM.threshold(netM(inputs))
-    bd_inputs = inputs + (patterns - inputs) * masks_output
+    bd_inputs = inputs + (patterns - inputs) * masks_output    # x * (1-m) + p * m
     return bd_inputs, bd_targets, patterns, masks_output
 
 
@@ -40,7 +41,7 @@ def create_cross(inputs1, inputs2, netG, netM, opt):
     patterns2 = netG(inputs2)
     patterns2 = netG.normalize_pattern(patterns2)
     masks_output = netM.threshold(netM(inputs2))
-    inputs_cross = inputs1 + (patterns2 - inputs1) * masks_output
+    inputs_cross = inputs1 + (patterns2 - inputs1) * masks_output   # inputs1 - pattern2
     return inputs_cross, patterns2, masks_output
 
 
@@ -60,7 +61,7 @@ def train_step(
     total_bd_correct = 0
 
     total_loss = 0
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()   # 交叉熵损失函数
     criterion_div = nn.MSELoss(reduction="none")
     for batch_idx, (inputs1, targets1), (inputs2, targets2) in zip(range(len(train_dl1)), train_dl1, train_dl2):
         optimizerC.zero_grad()
@@ -80,8 +81,9 @@ def train_step(
         total_inputs = torch.cat((inputs_bd, inputs_cross, inputs1[num_bd + num_cross :]), 0)
         total_targets = torch.cat((targets_bd, targets1[num_bd:]), 0)
 
-        preds = netC(total_inputs)
+        preds = netC(total_inputs)  # netG得到分类结果
         loss_ce = criterion(preds, total_targets)
+        # classification loss交叉熵损失函数 目的是使得两个分布接近
 
         # Calculating diversity loss
         distance_images = criterion_div(inputs1[:num_bd], inputs2[num_bd : num_bd + num_bd])
@@ -179,7 +181,7 @@ def eval(
             bs = inputs1.shape[0]
 
             preds_clean = netC(inputs1)
-            correct_clean = torch.sum(torch.argmax(preds_clean, 1) == targets1)
+            correct_clean = torch.sum(torch.argmax(preds_clean, 1) == targets1)    # 正确预测的数量
             total_correct_clean += correct_clean
 
             inputs_bd, targets_bd, _, _ = create_bd(inputs1, targets1, netG, netM, opt)
@@ -249,7 +251,7 @@ def train_mask_step(netM, optimizerM, schedulerM, train_dl1, train_dl2, epoch, o
 
         bs = inputs1.shape[0]
         masks1 = netM(inputs1)
-        masks1, masks2 = netM.threshold(netM(inputs1)), netM.threshold(netM(inputs2))
+        masks1, masks2 = netM.threshold(netM(inputs1)), netM.threshold(netM(inputs2))   # Tanh激活函数，引入非线性
 
         # Calculating diversity loss
         distance_images = criterion_div(inputs1, inputs2)
@@ -260,10 +262,10 @@ def train_mask_step(netM, optimizerM, schedulerM, train_dl1, train_dl2, epoch, o
         distance_patterns = torch.mean(distance_patterns, dim=(1, 2, 3))
         distance_patterns = torch.sqrt(distance_patterns)
 
-        loss_div = distance_images / (distance_patterns + opt.EPSILON)
+        loss_div = distance_images / (distance_patterns + opt.EPSILON)  # 防止/0
         loss_div = torch.mean(loss_div) * opt.lambda_div
 
-        loss_norm = torch.mean(F.relu(masks1 - opt.mask_density))
+        loss_norm = torch.mean(F.relu(masks1 - opt.mask_density))   # mask_density 超参数 0.032 改成其他好像没有太大影响？
 
         total_loss = opt.lambda_norm * loss_norm + opt.lambda_div * loss_div
         total_loss.backward()
@@ -338,7 +340,7 @@ def eval_mask(netM, optimizerM, schedulerM, test_dl1, test_dl2, epoch, opt):
 def train(opt):
     # Prepare model related things
     if opt.dataset == "cifar10":
-        netC = PreActResNet18().to(opt.device)
+        netC = PreActResNet18().to(opt.device)  # PreActResNet18一种模型架构
     elif opt.dataset == "gtsrb":
         netC = PreActResNet18(num_classes=43).to(opt.device)
     elif opt.dataset == "mnist":
@@ -347,12 +349,12 @@ def train(opt):
         raise Exception("Invalid dataset")
 
     netG = Generator(opt).to(opt.device)
-    optimizerC = torch.optim.SGD(netC.parameters(), opt.lr_C, momentum=0.9, weight_decay=5e-4)
-    optimizerG = torch.optim.Adam(netG.parameters(), opt.lr_G, betas=(0.5, 0.9))
+    optimizerC = torch.optim.SGD(netC.parameters(), opt.lr_C, momentum=0.9, weight_decay=5e-4)  # classifier f
+    optimizerG = torch.optim.Adam(netG.parameters(), opt.lr_G, betas=(0.5, 0.9))    # generater g, m定训练p
     schedulerC = torch.optim.lr_scheduler.MultiStepLR(optimizerC, opt.schedulerC_milestones, opt.schedulerC_lambda)
     schedulerG = torch.optim.lr_scheduler.MultiStepLR(optimizerG, opt.schedulerG_milestones, opt.schedulerG_lambda)
 
-    netM = Generator(opt, out_channels=1).to(opt.device)
+    netM = Generator(opt, out_channels=1).to(opt.device)    # mask-m
     optimizerM = torch.optim.Adam(netM.parameters(), opt.lr_M, betas=(0.5, 0.9))
     schedulerM = torch.optim.lr_scheduler.MultiStepLR(optimizerM, opt.schedulerM_milestones, opt.schedulerM_lambda)
 
@@ -365,7 +367,7 @@ def train(opt):
         os.makedirs(log_dir)
     tf_writer = SummaryWriter(log_dir=log_dir)
 
-    # Continue training ?
+    # Continue training ? 如果有保存的训练结果就继续训练
     ckpt_folder = os.path.join(opt.checkpoints, opt.dataset, opt.attack_mode)
     ckpt_path = os.path.join(ckpt_folder, "{}_{}_ckpt.pth.tar".format(opt.attack_mode, opt.dataset))
     if os.path.exists(ckpt_path):
@@ -396,7 +398,7 @@ def train(opt):
         print("Training from scratch")
 
     # Prepare dataset
-    train_dl1 = get_dataloader(opt, train=True)
+    train_dl1 = get_dataloader(opt, train=True)    # get_dataloader()将数据集shuffle后分为了多个batch
     train_dl2 = get_dataloader(opt, train=True)
     test_dl1 = get_dataloader(opt, train=False)
     test_dl2 = get_dataloader(opt, train=False)
@@ -409,6 +411,7 @@ def train(opt):
                     epoch, opt.dataset, opt.attack_mode, opt.mask_density, opt.lambda_div, opt.lambda_norm
                 )
             )
+            # 训练m
             train_mask_step(netM, optimizerM, schedulerM, train_dl1, train_dl2, epoch, opt, tf_writer)
             epoch = eval_mask(netM, optimizerM, schedulerM, test_dl1, test_dl2, epoch, opt)
             epoch += 1
@@ -421,6 +424,7 @@ def train(opt):
                 epoch, opt.dataset, opt.attack_mode, opt.mask_density, opt.lambda_div
             )
         )
+        # netC和netG一起训练，即分类器和trigger生成器
         train_step(
             netC,
             netG,
@@ -458,7 +462,7 @@ def train(opt):
 
 
 def main():
-    opt = config.get_arguments().parse_args()
+    opt = config.get_arguments().parse_args()   # 参数默认值见get_arguments()
     if opt.dataset == "mnist" or opt.dataset == "cifar10":
         opt.num_classes = 10
     elif opt.dataset == "gtsrb":
@@ -471,7 +475,7 @@ def main():
     if opt.dataset == "cifar10":
         opt.input_height = 32
         opt.input_width = 32
-        opt.input_channel = 3
+        opt.input_channel = 3   # channel 1-灰度图像 3-RGB
     elif opt.dataset == "gtsrb":
         opt.input_height = 32
         opt.input_width = 32

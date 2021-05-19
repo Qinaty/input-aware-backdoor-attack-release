@@ -126,5 +126,5 @@ def get_dataloader(opt, train=True, c=0, k=0):
         raise Exception("Invalid dataset")
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=opt.batchsize, num_workers=opt.num_workers, shuffle=True
-    )
+    )   # shuffle打乱
     return dataloader
